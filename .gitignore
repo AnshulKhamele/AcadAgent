@@ -1,0 +1,26 @@
+# Virtual Environment (Very large, should not be on Git)
+acad/
+venv/
+.venv/
+env/
+
+# Private API Keys & Credentials (Must NEVER be uploaded)
+.env
+
+# Python compilation cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# VS Code / IDE configs
+.vscode/
+.idea/
+
+# Local interactive log outputs
+interaction_logs.txt
+*.log

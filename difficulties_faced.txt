@@ -1,0 +1,98 @@
+================================================================================
+          AcadAgent: Technical Challenges & Engineering Solutions
+================================================================================
+
+This document serves as an interview study guide detailing the real-world 
+engineering challenges faced during the development of AcadAgent, their root 
+causes, and the final implementation details.
+
+---
+
+## 1. Hyperlink Target Loss in Pandas Excel Parsing
+* **Difficulty**: During the SQLite ingestion phase, we needed to extract the Google 
+  Drive and Google Doc links from the course timetable spreadsheet columns. Standard 
+  methods like `pandas.read_excel()` only load the display string (e.g. "Course Plan") 
+  and silently discard the underlying hyperlink targets.
+* **Root Cause**: The default Pandas engine reads cell values but ignores the XML 
+  metadata representation where hyperlink targets are stored in the Excel openXML structure.
+* **Engineering Solution**: We rewrote the ingestion pipeline using the `openpyxl` library. 
+  By iterating cell-by-cell and checking `cell.hyperlink.target`, we successfully retrieved 
+  the actual Google Drive/Doc download URLs. We then ingested these URLs directly into 
+  our SQLite database.
+
+---
+
+## 2. Python Workspace Import Resolution Failures on Windows
+* **Difficulty**: Running scripts inside subdirectories (e.g. `python agent/advising_agent.py`) 
+  threw `ModuleNotFoundError: No module named 'agent'` when attempting to import tools from 
+  the `agent` package.
+* **Root Cause**: When executing a Python script directly, Python automatically inserts 
+  the script's parent folder (`agent/`) as the first entry in `sys.path`. When the script 
+  runs `from agent.tools import tools`, it looks inside the `agent/` folder for another folder 
+  named `agent/`, causing the lookup to fail.
+* **Engineering Solution**: We added dynamic workspace root path resolution at the very beginning 
+  of our python files:
+  `sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))`
+  This dynamically calculates the absolute path of the workspace root and appends it to 
+  `sys.path` before any local packages are imported, ensuring absolute import compatibility.
+
+---
+
+## 3. Silent .env Loading Failures
+* **Difficulty**: Although `GOOGLE_API_KEY` was correctly defined in the `.env` file, 
+  calling `dotenv.load_dotenv()` with no arguments returned `False` and failed to load the 
+  key into `os.environ` during runtime, causing model initialization failures.
+* **Root Cause**: By default, `load_dotenv()` calls `find_dotenv()`, which starts searching 
+  upwards from the directory of the running python command. Depending on where the command was 
+  executed (especially in nested terminal sandboxes or Windows PowerShell contexts), it failed 
+  to locate the file, failing silently without throwing an exception.
+* **Engineering Solution**: We changed the loading code to resolve the absolute workspace 
+  path to the `.env` file explicitly:
+  `dotenv_path = os.path.join(workspace_root, ".env")`
+  `load_dotenv(dotenv_path=dotenv_path, override=True)`
+  Passing an explicit absolute path and setting `override=True` forces Python to load the 
+  correct `.env` configuration from the workspace root.
+
+---
+
+## 4. Google Drive Virus Scan Redirect warning
+* **Difficulty**: When downloading large course plan documents (> 5MB) from Google Drive 
+  programmatically to build the FAISS index, the request returned a page saying "Google Drive 
+  cannot scan this file for viruses," resulting in corrupted HTML pages instead of the expected 
+  PDF binaries.
+* **Root Cause**: Google Drive redirects larger file downloads to a warning prompt where 
+  the user must manually click a confirmation link. The script's GET request captured this 
+  warning HTML instead of the PDF binary.
+* **Engineering Solution**: We implemented a two-step session handler using Python's `requests` 
+  library. The first request detects if a `download_warning` cookie is returned. If found, we 
+  extract the confirmation token from the cookie and send a second request with `confirm=token` 
+  to download the actual PDF binary stream.
+
+---
+
+## 5. Free-Tier API Quota Limits (429 Resource Exhausted)
+* **Difficulty**: During the prerequisite graph construction and RAG compilation phases, 
+  we frequently encountered `429 RESOURCE_EXHAUSTED` errors from the Gemini API.
+* **Root Cause**: The Gemini free-tier has a strict limit of 15 Requests Per Minute (RPM) 
+  and a daily limit of 20 requests per day for standard `gemini-2.5-flash` API keys.
+* **Engineering Solution**:
+  1. We added a 5-second sleep in sequential request loops (such as graph building) to 
+     stay below the 15 RPM limit.
+  2. We configured LangChain's `ChatGoogleGenerativeAI` with `max_retries=3`. This automatically 
+     handles temporary rate limits using exponential backoff.
+  3. We checked the list of active models on the API key and implemented a dynamic **Automated Model Fallback Chain** in `agent/advising_agent.py`. The agent attempts queries using a prioritized list (`gemini-2.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-2.0-flash`, `gemini-2.5-flash`). If any model returns a 429 or 503 error, the agent catches it, logs the transition, and retries the request using the next model in less than a second, ensuring the app never crashes due to quota limits.
+---
+
+## 6. Streamlit Browser Session State Cache Traps
+* **Difficulty**: After implementing the backend message unpacking logic, the browser interface 
+  continued to display raw dictionary formatting (e.g. `[{'type': 'text', 'text': ...}]`) 
+  for previously asked queries during development.
+* **Root Cause**: Streamlit preserves the `st.session_state` list of messages across code hot-reloads 
+  and page refreshes. The old, structured messages generated prior to the fix were still cached 
+  inside the browser's session history, leading to stale formatting rendering.
+* **Engineering Solution**: We implemented two layers of validation:
+  1. Added a list-unpacking check inside the UI rendering loop of `app.py` to sanitize and unpack 
+     any existing cached message blocks automatically.
+  2. Added a `"🧹 Clear Chat History"` button in the sidebar to reset the session state array in 
+     a single click, giving the user a clean slate.
+================================================================================

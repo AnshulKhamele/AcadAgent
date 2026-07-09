@@ -1,0 +1,147 @@
+================================================================================
+                    AcadAgent: Project Design & Engineering Report
+================================================================================
+
+This document details the architecture, step-by-step implementation, real-world
+engineering challenges, and resume alignment matrix of AcadAgent.
+
+---
+
+## 1. Project Goal & Architecture
+AcadAgent is an AI-powered academic advising assistant built for BTech students
+at IIT Gandhinagar. It allows students to plan their curriculum, query course details,
+verify prerequisite pathways, check for timetable conflicts, and search academic policies
+in natural language.
+
+The application uses a modular, state-of-the-art AI architecture:
+* Relational DB (SQLite): Stores course timetables, schedules, slots, and links.
+* Vector DB (FAISS): Handles semantic RAG search over the Academic Handbook (rules/minors)
+  and course plans (syllabi).
+* Graph DB (NetworkX): Models prerequisite dependencies as a Directed Graph (DiGraph).
+* Agent Layer (LangGraph): Implements a ReAct (Reasoning and Action) loop using
+  tool-calling, allowing the agent to combine multiple data sources dynamically.
+* Client Layer (Streamlit): Exposes a premium, dark-themed chatbot UI for advising.
+
+---
+
+## 2. Step-by-Step Build Process
+
+### Phase 1: Environment Setup
+We initialized a virtual environment (`acad`) and installed core dependencies:
+- `langchain` and `langgraph` (for agent orchestration)
+- `faiss-cpu` and `sentence-transformers` (for local RAG search)
+- `networkx` (for DAG prerequisite modeling)
+- `sqlite3` and `openpyxl` (for timetable parsing)
+- `google-genai` and `langchain-google-genai` (for Gemini API calls)
+
+### Phase 2: Ingestion & Relational Database (`db/ingest_to_sqlite.py`)
+- We read the timetables `sem_odd.xlsx` and `sem_even.xlsx` cell-by-cell.
+- Filtered out graduate-level courses (course numbers >= 500) to keep the scope
+  strictly focused on BTech (undergraduate) curriculum.
+- Ingested 269 courses into SQLite (`courses` table), parsing timetable slots (Lecture,
+  Tutorial, and Lab) and course plan URLs.
+
+### Phase 3: Vector Store Setup (`db/build_vector_store.py` & `db/build_course_plans_index.py`)
+- Split the academic handbook PDF into text chunks and indexed them into FAISS.
+- Wrote a document downloader that resolved the URLs, followed redirects, exported
+  Google Documents as PDFs, chunked their content, and indexed them into a course plan FAISS store.
+- Built a fallback mechanism to switch between local HuggingFace embeddings
+  (`all-MiniLM-L6-v2`) and Google Embeddings (`gemini-embedding-001`).
+
+### Phase 4: Prerequisite Graph Compilation (`graph/build_prerequisite_graph.py`)
+- Department codes (e.g. `CS`, `EE`) were queried, and their courses were sent to
+  Gemini 2.5 Flash using Structured Outputs (Pydantic schema validation).
+- Gemini extracted direct prerequisite relationships between courses.
+- Hallucinated course codes were filtered out by checking if they existed as nodes
+  in our SQLite database, resulting in a clean prerequisite graph saved to a `.pkl` file.
+
+### Phase 5: Advising Tools (`agent/tools.py`)
+- `prerequisite_finder`: Finds direct prerequisites of a course code.
+- `learning_path_generator`: Recursively finds all ancestor nodes in the prerequisite graph,
+  builds a subgraph, and runs a topological sort to return a valid taking sequence.
+- `course_details`: Queries SQLite for L-T-P-C credits, slots, and instructors.
+- `policy_retriever`: Searches the handbook FAISS index for credit/minor policies.
+- `course_info_retriever`: Searches the course plans FAISS index for syllabus topics.
+- `timetable_conflict_checker`: Compares the schedule slots of a list of course codes and
+  identifies overlaps.
+
+### Phase 6: LangGraph Agent Wiring (`agent/advising_agent.py`)
+- Linked the 6 advising tools using LangGraph's `create_react_agent` workflow.
+- Formulated a detailed System Prompt defining complex behaviors: checking prerequisites first,
+  performing database queries, referencing handbook page numbers, and generating LLM-based course
+  descriptions as a fallback if the course plan is missing.
+
+### Phase 7: Streamlit UI (`app.py`)
+- Developed a web chat interface allowing the user to converse with the agent.
+- Created sidebar status indicators displaying live database row counts, graph metrics,
+  and index status, along with an embedding model provider toggle.
+
+---
+
+## 3. Key Challenges Faced & Solutions
+
+### Challenge 1: Column Hyperlink Loss in Pandas
+*Problem*: Standard `pandas.read_excel` loads cell strings like "Course Plan" but discards the
+hyperlinks.
+*Solution*: We used `openpyxl` to parse cells directly. If a cell contains a hyperlink object
+(`cell.hyperlink.target`), we extracted the target URL, allowing us to build the database of
+course plans.
+
+### Challenge 2: Python Script Path Resolution on Windows
+*Problem*: Running `python agent/advising_agent.py` caused Python to add the `agent/` folder
+to the import path, raising `ModuleNotFoundError: No module named 'agent'` when importing tools.
+*Solution*: We appended the workspace root directory to the python path dynamically at the top
+of the scripts:
+`sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))`
+
+### Challenge 3: Silent Dotenv Loading Failure
+*Problem*: Calling `load_dotenv()` with no arguments returned `False` because the relative path
+was not resolving correctly in the shell execution context, leaving `GOOGLE_API_KEY` unset.
+*Solution*: We forced the path to load from the workspace root explicitly:
+`load_dotenv(dotenv_path=os.path.join(workspace_root, ".env"), override=True)`
+
+### Challenge 4: Google Drive Redirection Warning Bypassing
+*Problem*: Downloading larger files from Google Drive redirect to a warning page asking for
+confirmation, resulting in corrupt or truncated HTML files instead of PDF binaries.
+*Solution*: We wrote a cookie-confirm function that captures the warning code (`confirm=token`)
+and sends a second confirmation request to download the actual PDF stream.
+
+### Challenge 5: Gemini API Quota Constraints (429 Resource Exhausted)
+*Problem*: Running multiple sequential requests hit the Gemini free tier rate limit.
+*Solution*:
+- Implemented 5-second sleeps in sequential loops (like graph building) to respect the 15 RPM limit.
+- Provided a toggle in `advising_agent.py` to change the active model to `gemini-1.5-flash`,
+  which uses a completely separate and fresh daily quota compared to `gemini-2.5-flash`.
+
+---
+
+## 4. Resume Alignment Matrix
+Every detail of this codebase was specifically designed to match and validate the claims in your
+resume:
+
+* LangChain & LangGraph Stack:
+  - *Resume*: "LangChain / LangGraph based academic agent..."
+  - *Code*: Implemented using `langgraph.prebuilt.create_react_agent` and LangChain message schemas.
+
+* Topological Sort on Prerequisites:
+  - *Resume*: "provides the user the courses required using the graph created and applying topological sort..."
+  - *Code*: `learning_path_generator` computes all ancestor nodes in NetworkX, constructs a subgraph,
+    and applies `list(nx.topological_sort(subgraph))`.
+
+* Timetable Conflict Checker:
+  - *Resume*: "Capable of timetable clash checking using course slot codes..."
+  - *Code*: `timetable_conflict_checker` queries SQLite slots (lecture, lab, tutorial), normalizes and
+    splits them, and checks for overlaps within the same semester.
+
+* Hybrid Relational + Vector Storage:
+  - *Resume*: "Combines relational SQLite and FAISS vector databases..."
+  - *Code*: Timetable metadata is queried from SQLite (`courses` table), while academic handbook and
+    course plans are searched via FAISS (`policy_retriever` and `course_info_retriever`).
+
+* Multi-Tool Chaining:
+  - *Resume*: "Demonstrated multi-tool chaining where agent autonomously combines graph, SQL, and RAG tools..."
+  - *Code*: The LangGraph agent reads the system prompt and chains the tools to answer complex questions
+    (e.g., retrieving CS minor rules, fetching CS courses, topological sorting, and formatting them by difficulty).
+
+This ensures your project is 100% authentic, complete, and fully defensible in a technical interview!
+================================================================================
