@@ -4,20 +4,20 @@
 
 This document is a comprehensive, step-by-step description of how AcadAgent was 
 built. It explains every design decision, database schema, algorithm, and 
-engineering challenge in basic, easy-to-understand language. Read this to 
-prepare for your interview and explain the project like a pro!
+engineering challenge using simple analogies alongside their technical terms 
+(in brackets) to prepare you for technical interviews.
 
 ---
 
 ## TABLE OF CONTENTS
 1. Project Vision & Architecture (The Big Picture)
 2. Phase 1: Database Ingestion (Excel to SQLite)
-3. Phase 2: RAG Search Engines (PDFs to Vector Databases)
-4. Phase 3: Prerequisite Graph Mapping (NetworkX & Topological Sort)
-5. Phase 4: AI Brain & Reasoning Loop (LangGraph State Machine)
-6. Phase 5: Resiliency & Quota Management (Model Fallback System)
-7. Phase 6: Logging, Frontend, and UI Integration (Streamlit)
-8. Phase 7: Deployment & GitHub Launch
+3. Phase 2: Open-Book Exams (PDFs to RAG Vector Databases)
+4. Phase 3: Video Game Skill Trees (NetworkX Prerequisite Graph & Topological Sort)
+5. Phase 4: The Detective Loop (LangGraph State Machine & ReAct Loop)
+6. Phase 5: Team of Standby Workers (Resilient Model Fallback System)
+7. Phase 6: Session Cleaning & Log Vault (Streamlit UI & interaction_logs.txt)
+8. Phase 7: Clean Code Packaging (Git Setup & Credentials Vault Fix)
 
 ---
 
@@ -35,36 +35,37 @@ undergraduate students at IIT Gandhinagar (IITGN). It helps students do three th
 ### The Architecture:
 Instead of relying on a simple chatbot that guesses or makes up information, 
 AcadAgent uses a **hybrid architecture** that coordinates:
-* **SQLite Database**: A relational database that stores exact course timetables.
-* **NetworkX Directed Graph**: A mathematical map of prerequisite relationships.
-* **FAISS Vector Databases**: Search indexes that run semantic search over PDFs 
-  (the Academic Handbook and Course Plans) using "embeddings."
-* **LangGraph ReAct Agent**: The central AI engine that decides which of these 
-  databases to query based on what the user asks.
+* **SQLite Database [Relational Database]**: A structured filing system that stores exact course timetables.
+* **NetworkX Directed Graph [Graph Data Structure]**: A map of arrow links representing prerequisites.
+* **FAISS Vector Databases [Semantic Index]**: Search indexes that run concept-matching searches over PDFs.
+* **LangGraph ReAct Agent [Central Orchestrator]**: The central AI engine that decides which database to query.
 
 ---
 
 ## 2. PHASE 1: DATABASE INGESTION (EXCEL TO SQLITE)
 
-### The Data Sources:
-The raw data for course offerings, slot timetables, and instructors is located in 
-two spreadsheets: `sem_odd.xlsx` (for the autumn semester) and `sem_even.xlsx` 
-(for the spring semester).
+### Analogy: The Digital Filing Cabinet [Relational Database Schema]
+Imagine a physical student office with stacks of paper spreadsheets. We want to 
+move all of this into a high-speed digital filing cabinet where every folder has 
+pre-defined slots (columns).
+* The raw data for course offerings, slot timetables, and instructors is located in 
+  two spreadsheets: `sem_odd.xlsx` (for the autumn semester) and `sem_even.xlsx` 
+  (for the spring semester).
 
-### The Ingestion Code (`db/ingest_to_sqlite.py`):
-1. **Reading Excel Files Safely**:
+### The Ingestion Steps (`db/ingest_to_sqlite.py`):
+1. **Reading Excel Files Safely [Hyperlink Extraction]**:
    * *Problem*: Standard Excel readers in Python (like Pandas) only read cell values 
      as plain text and throw away underlying links. This meant we would lose the 
      Google Drive/Doc links to official course plans.
    * *Solution*: We used the `openpyxl` library to read spreadsheets cell-by-cell. 
      By checking `cell.hyperlink.target`, we extracted the exact download links.
-2. **Filtering for the Audience**:
+2. **BTech Scope Filter [Data Filtering]**:
    * Originally, we filtered out courses numbered 500 or higher (which represent 
      MTech/PhD courses). 
    * However, since BTech students can take advanced 500/600-level courses as 
      open electives (e.g., `ES 667` Deep Learning or `CS 613` NLP), we updated 
      the script to ingest **all** 625 courses so they are searchable.
-3. **Semester Calculation**:
+3. **Recommended Semester Calculation [Dynamic Field Mapping]**:
    * We wanted the database to tell the student what BTech semester a course is 
      recommended for.
    * We mapped this programmatically:
@@ -73,7 +74,7 @@ two spreadsheets: `sem_odd.xlsx` (for the autumn semester) and `sem_even.xlsx`
      * 300-level courses: Odd Semester = Semester 5, Even Semester = Semester 6.
      * 400-level courses: Odd Semester = Semester 7, Even Semester = Semester 8.
      * 500/600-level courses: Set to `None` since these are advanced electives.
-4. **SQLite Insertion**:
+4. **SQLite Insertion [Database Storage]**:
    * We created a table named `courses` in a database file named `acadagent.db` 
      with columns: `course_code`, `clean_course_code` (standardized spacing like `CS 330`), 
      `title`, `instructor`, `semester` (odd/even), `semester_num` (BTech semester 1-8), 
@@ -82,30 +83,36 @@ two spreadsheets: `sem_odd.xlsx` (for the autumn semester) and `sem_even.xlsx`
 
 ---
 
-## 3. PHASE 2: RAG SEARCH ENGINES (PDFS TO VECTOR DATABASES)
+## 3. PHASE 2: OPEN-BOOK EXAMS (PDFS TO RAG VECTOR DATABASES)
 
-### What is RAG?
-RAG stands for **Retrieval-Augmented Generation**. Instead of training a model on 
-your private documents (which is slow and expensive), you convert your documents 
-into numbers called **embeddings** (representing the meaning of sentences) and 
-store them in a vector database. When a user asks a question, the vector database 
-finds the most relevant paragraphs from the document and feeds them to the LLM 
-as "context" to write a factually accurate answer.
+### Analogy: The Open-Book Exam Helper [RAG - Retrieval-Augmented Generation]
+Instead of forcing the AI to memorize the entire Academic Handbook (which leads 
+to guessing/hallucinating), we make the AI take an **"Open-Book Exam"**. 
+* We give the AI a high-speed search assistant. When a student asks a question, 
+  the assistant flips through the pages, finds the exact paragraphs that mention 
+  the answer (**Retrieval**), places those paragraphs on the AI's desk as context 
+  (**Augmented**), and the AI reads them to write a factually accurate answer (**Generation**).
+
+To do this, we need to convert PDF text into search-friendly math concepts:
+* **Embeddings [Vector Representation]**: Translating a sentence's meaning into 
+  a list of numbers (a vector). Similar meanings will have numbers that are close 
+  to each other.
+* **Vector Database [FAISS Index]**: A special database designed to find matching 
+  concepts instantly by comparing these lists of numbers.
 
 We built two RAG indexes:
 
-### Index 1: The Academic Handbook (`db/build_vector_store.py`)
+### Index 1: The Academic Handbook RAG (`db/build_vector_store.py`)
 1. Read the `handbook.pdf` file.
-2. Split the PDF text into smaller, overlapping chunks (e.g. 1000 characters 
+2. **Text Chunking**: Split the PDF text into smaller, overlapping chunks (e.g. 1000 characters 
    with a 200-character overlap) so that paragraphs aren't cut in half.
-3. Sent these chunks to an embedding model (HuggingFace's local MiniLM model or 
+3. **Vector Embedding**: Sent these chunks to an embedding model (HuggingFace's local MiniLM model or 
    Gemini's embedding API) to convert the text into mathematical vectors.
-4. Saved these vectors locally into a **FAISS (Facebook AI Similarity Search)** 
-   index directory named `faiss_index_local`.
+4. **FAISS Storage**: Saved these vectors locally into a FAISS index directory named `faiss_index_local`.
 
-### Index 2: Course Plans (`db/build_course_plans_index.py`)
+### Index 2: Course Plans RAG (`db/build_course_plans_index.py`)
 1. Checked SQLite for any courses that had a Google Drive syllabus URL.
-2. **Bypassing Google Drive Warnings**:
+2. **Bypassing Google Drive Warnings [Cookie Session Handling]**:
    * *Problem*: When downloading files > 5MB, Google Drive displays a page warning 
      that "Google cannot scan this file for viruses," which breaks standard download scripts.
    * *Solution*: We wrote a Python session handler that grabs the virus scan 
@@ -117,14 +124,17 @@ We built two RAG indexes:
 
 ---
 
-## 4. PHASE 3: PREREQUISITE GRAPH MAPPING (NETWORKX & TOPOLOGICAL SORT)
+## 4. PHASE 3: VIDEO GAME SKILL TREES (NETWORKX PREREQUISITE GRAPH & TOPOLOGICAL SORT)
 
-### What is a Directed Graph?
-A directed graph is a mathematical network composed of **nodes** (points) and **edges** 
-(directed arrows). In our project:
-* Nodes represent courses (e.g. `ES 112`, `CS 201`, `CS 330`).
-* Edges represent prerequisite relationships (e.g., an arrow pointing from `CS 201` 
-  to `CS 330` means `CS 201` must be completed first).
+### Analogy: Video Game Skill Trees [Directed Graphs & Topological Sort]
+Think of course planning like unlocking skills in a role-playing game. You cannot 
+unlock Level 3 (e.g., `CS 330` Operating Systems) until you have unlocked Level 2 
+(e.g., `CS 201` Data Structures), which itself requires Level 1 (e.g., `ES 112` Computing).
+* **Directed Graph [DiGraph]**: A network of **Nodes** (the courses) connected 
+  by directed arrows called **Edges** (the prerequisite requirements).
+* **Topological Sort [Dependency Ordering Algorithm]**: An algorithm that takes a 
+  tangled web of prerequisites and untangles it, laying the courses out in a straight line 
+  so that every prerequisite course is guaranteed to come before its target course.
 
 ### Building the Graph (`graph/build_prerequisite_graph.py`):
 1. We set up a Pydantic schema `PrerequisiteRelation` requiring a `prerequisite` code, 
@@ -133,37 +143,32 @@ A directed graph is a mathematical network composed of **nodes** (points) and **
    course codes and titles from SQLite.
 3. Sent this list to Gemini with a structured prompt, asking the LLM to identify 
    factual prerequisite relationships and output them in structured JSON.
-4. **Surviving Network Glitches**: We added a retry handler (3 attempts, 10s sleep) 
+4. **Network Glitch Safety [Retry Loop]**: We added a retry handler (3 attempts, 10s sleep) 
    so that temporary network glitches or 503 errors during this process would not skip 
    entire departments.
 5. Saved the final graph structure (478 nodes, 119 edges) to `graph/prerequisite_graph.pkl` 
    using Python's `pickle` library.
 
-### Prerequisite Resolution (How the Agent works out the path):
+### Prerequisite Path Resolution:
 When a student asks for the sequence to take `CS 330`:
 1. The agent loads the NetworkX graph.
 2. It uses `nx.ancestors(G, target)` to recursively find all prerequisite nodes 
-   (e.g., finding that `CS 330` requires `CS 201`, which requires `ES 112`).
+   (e.g. finding that `CS 330` requires `CS 201`, which requires `ES 112`).
 3. It creates a small subgraph containing only these courses.
-4. It runs a **Topological Sort** (`nx.topological_sort()`). This is an algorithm 
-   that orders nodes in a linear sequence such that for every directed edge $U \rightarrow V$, 
-   node $U$ comes before $V$.
+4. It runs `nx.topological_sort()`.
 5. This outputs a clean, sequential taking order (e.g., `ES 112` $\rightarrow$ `CS 201` $\rightarrow$ `CS 330`).
 
 ---
 
-## 5. PHASE 4: AI BRAIN & REASONING LOOP (LANGGRAPH STATE MACHINE)
+## 5. PHASE 4: THE DETECTIVE LOOP (LANGGRAPH STATE MACHINE & REACT LOOP)
 
-### What is LangGraph?
-Instead of hardcoding a list of IF/ELSE statements to build the chatbot, we used 
-**LangGraph**. LangGraph allows us to define the AI as a state machine:
-1. **START**: Receives the student's text query.
-2. **LLM Node**: The model processes the query. Based on what is requested, it 
-   decides whether to output a final answer or call an academic tool.
-3. **Tools Node**: Executes the requested tool (e.g. querying SQLite or FAISS) 
-   and returns the outputs back to the LLM.
-4. **Loop**: The LLM evaluates the tool outputs. If it needs more data, it calls 
-   another tool. Otherwise, it moves to **END**.
+### Analogy: The Detective Solving a Case [LangGraph State Machine & ReAct Loop]
+Instead of writing a rigid script with static steps, the AI acts like a **Detective**. 
+* **User Query [The Case Clue]**: The student asks a question.
+* **Reasoning [LLM Node]**: The detective reviews the clue and thinks: *"What information do I need to solve this?"*
+* **Action [Tool Calls]**: The detective decides to run a tool (e.g. checking SQLite or opening the Handbook PDF).
+* **Observation [Tool Output]**: The tool returns the result, and the detective updates their notepad (**State**).
+* **Loop**: The detective thinks again: *"Do I have enough clues?"* If yes, they write the final report (**END State**). If no, they run another tool (**Loop**).
 
 ### The Core Tools (`agent/tools.py`):
 We equipped our agent with the following custom Python tools:
@@ -178,7 +183,7 @@ We equipped our agent with the following custom Python tools:
 6. **`policy_retriever`**: Performs semantic search over the academic handbook index.
 7. **`course_info_retriever`**: Performs semantic search over the syllabus index.
 
-### Smart Course Code Resolver:
+### Smart Course Code Resolver [Fuzzy Lookup & Abbreviations]:
 * *The Problem*: Students often ask using shorthand or natural language (e.g. `"NLP"` or 
   `"what is operating systems"`). A direct database lookup for `"NLP"` would return empty.
 * *The Solution*: We added `resolve_course_code` in `tools.py`. It uses a dictionary of 
@@ -188,27 +193,27 @@ We equipped our agent with the following custom Python tools:
 
 ---
 
-## 6. PHASE 5: RESILIENCY & QUOTA MANAGEMENT (MODEL FALLBACK SYSTEM)
+## 6. PHASE 5: TEAM OF STANDBY WORKERS (RESILIENT MODEL FALLBACK SYSTEM)
 
-### The Quota Problem:
-Gemini's free-tier API has strict rate limits (15 requests per minute, and a daily 
-limit of 20 requests per model). During graph compilation or heavy testing, we 
-frequently encountered `429 RESOURCE_EXHAUSTED` or temporary `503 Service Unavailable` errors.
+### Analogy: The Backup Team [Model Fallback Chain]
+Imagine a primary worker performing tasks. If that worker gets exhausted or runs 
+out of daily energy (**Rate Limit / 429 Quota Exhausted / 503 Service Unavailable**), 
+a **standby worker** immediately steps in to take over the job, ensuring the office 
+never shuts down.
 
-### The Automated Fallback Solution (`agent/advising_agent.py`):
-We implemented an **Automated Model Fallback Chain**:
-1. We defined an ordered list of candidate models available on the API key:
+### The Implementation (`agent/advising_agent.py`):
+1. We defined a prioritized list of candidate models:
    `MODELS_TO_TRY = ["gemini-2.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]`
-2. In `run_advising_agent`, we loop through these models.
-3. For the active model, we compile the LangGraph ReAct agent.
-4. If the call fails with a 429 (Resource Exhausted) or 503 (Unavailable) error, 
-   we immediately catch the exception, print a fallback log message, and switch to 
-   the next model in the list.
-5. This takes less than a second, isolating the user from quota limits.
+2. In `run_advising_agent`, we try compiling and running the LangGraph agent 
+   with the first model.
+3. If it fails due to a rate limit or service interruption, the script catches the 
+   exception in less than a second and immediately retries the query using the 
+   next model in the chain.
+4. This isolates the user completely from free-tier quota limits.
 
 ---
 
-## 7. PHASE 6: LOGGING, FRONTEND, AND UI INTEGRATION (STREAMLIT)
+## 7. PHASE 6: SESSION CLEANING & LOG VAULT (STREAMLIT UI & INTERACTION_LOGS.TXT)
 
 ### The UI Layer (`app.py`):
 We built a beautiful, modern user interface using **Streamlit**:
@@ -217,7 +222,7 @@ We built a beautiful, modern user interface using **Streamlit**:
 * **Quick Queries**: We added 4 sample click buttons at the bottom so users can test 
   CS minor pathways, prerequisite orders, and timetable conflicts with a single click.
 
-### The Streamlit Cache Trap (UI List Unpacking):
+### The Streamlit Cache Trap [UI List Unpacking]:
 * *Problem*: LangChain returns messages containing lists of dictionaries for multimodal support. 
   Furthermore, Streamlit caches `st.session_state.messages` in the browser. When code was updated, 
   historical messages rendered as raw list brackets: `[{'type': 'text', 'text': ...}]`.
@@ -234,7 +239,7 @@ We built a beautiful, modern user interface using **Streamlit**:
 
 ---
 
-## 8. PHASE 7: DEPLOYMENT & GITHUB LAUNCH
+## 8. PHASE 7: CLEAN CODE PACKAGING (GIT SETUP & CREDENTIALS VAULT FIX)
 
 To make this project interview-ready, we initialized Git and published it:
 1. **Adding `.gitignore`**:
@@ -246,7 +251,7 @@ To make this project interview-ready, we initialized Git and published it:
    * Initialized Git locally: `git init`.
    * Staged all project files (timetables, database, scripts, graphs, and images): `git add .`.
    * Created the first commit: `git commit -m "Initial commit"`.
-3. **Solving Git Permission Locks**:
+3. **Solving Git Permission Locks [Windows Credential vault]**:
    * *Problem*: The system had cached credentials for a global account (`xilinx-xhub-users-g1`), 
      denying permission to push to the personal repository (`AnshulKhamele/AcadAgent`).
    * *Solution*: We removed the cached credential from **Windows Credential Manager** under 
